@@ -1,0 +1,12 @@
+{
+  "name": "image-compressor-skill",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "画像圧縮・リサイズスキル用の依存パッケージ（sharp + dotenv）",
+  "dependencies": {
+    "ag-psd": "^31.0.2",
+    "dotenv": "^16.6.1",
+    "sharp": "^0.33.5"
+  }
+}
