@@ -1,9 +1,9 @@
 ---
 name: image-compressor
-description: 添付された複数の画像を一括で圧縮・リサイズするスキル。「画像を圧縮して」「このスクショを軽くして」「リサイズして」「画像を小さくして」などのリクエストで使用する。Node.js(sharp)で長辺1920pxにリサイズし、JPEG(MozJPEG)/PNG(Oxipng)/WebP(libwebp)/AVIF(libavif)で出力先ディレクトリに保存する。入力にはPSD/PSB(Photoshop形式、ag-psdでレイヤー合成済み画像として読み込み)も対応。
+description: 添付された複数の画像を一括で圧縮・リサイズするスキル。「画像を圧縮して」「このスクショを軽くして」「リサイズして」「画像を小さくして」「tifやpsdをClaude Codeで見れる形式にして」などのリクエストで使用する。Node.js(sharp)で長辺1920pxにリサイズし、JPEG(MozJPEG)/PNG(Oxipng)/WebP(libwebp)/AVIF(libavif)で出力先ディレクトリに保存する。入力にはTIFF、PSD/PSB(Photoshop、CMYKモード含む)、HEIC/HEIF(macOSでは`sips`経由)も対応。
 license: MIT
 author: shohei
-version: 2.0.0
+version: 2.1.0
 ---
 
 # 画像圧縮・リサイズ
@@ -46,6 +46,12 @@ PSD(Photoshop)ファイルをPNGに変換:
 node .claude/skills/image-compressor/scripts/compress_images.mjs "design.psd" --format png
 ```
 
+HEIC(iPhone写真)をJPEGに変換:
+
+```bash
+node .claude/skills/image-compressor/scripts/compress_images.mjs "IMG_1234.HEIC" --format jpg
+```
+
 1. 出力パスと圧縮結果をユーザーに報告する
 
 ## 引数
@@ -68,12 +74,25 @@ node .claude/skills/image-compressor/scripts/compress_images.mjs "design.psd" --
 
 ## 入力フォーマット
 
-sharp(libvips)が直接読める形式（JPEG/PNG/WebP/AVIF/TIFF等）に加えて、PSD/PSB（Photoshop）にも対応する。
+sharp(libvips)が直接読める形式（JPEG/PNG/WebP/AVIF/TIFF等）に加えて、PSD/PSB（Photoshop）・HEIC/HEIFにも対応する。`--format`未指定時、これらはそのままでは出力対応フォーマットに含まれないため、JPGにフォールバックする（他の未対応拡張子と同じ挙動）。
 
-- PSD/PSBは`ag-psd`（純JS製、ネイティブ依存なし）でパースし、**レイヤー合成済みの画像（composite image）をRGBAピクセルとして取得**してから、sharpのraw入力として以降のリサイズ・エンコード処理に渡す
+### PSD/PSB（Photoshop）
+
+- `ag-psd`（純JS製、ネイティブ依存なし）でパースし、**レイヤー合成済みの画像（composite image）をRGBAピクセルとして取得**してから、sharpのraw入力として以降のリサイズ・エンコード処理に渡す
 - **個別レイヤーは扱わない**。あくまでPhotoshop上で表示されるのと同じ「合成済みの1枚絵」として読み込む
-- `--format`未指定時、PSD/PSBはそのままでは出力対応フォーマットに含まれないため、JPGにフォールバックする（他の未対応拡張子と同じ挙動）
+- **CMYKモードのPSDにも対応**（印刷用素材はCMYKで作られていることが多い）。ag-psdは既定でCMYKを拒否するが、実際のデコード処理自体は実装されているため、内部の許可リスト（`supportedColorModes`）にCMYKを追加して有効化している
+- **非対応: CMYK+アルファ/特色チャンネルなど5チャンネル以上のPSD**（`Invalid channel count`エラーになる）。ag-psdの`readDataRLE`がチャンネル数4固定を前提にした実装のため、5チャンネル以上のファイルは長さテーブルの読み取り自体がずれて内容が壊れる。安全に対応するには本格的なパッチが必要なため見送っている
 - 合成画像データを含まない・壊れているPSDはエラーとしてスキップし、他のファイルの処理は続行する
+
+### HEIC/HEIF
+
+- sharpに同梱されているlibheifは、実機写真（iPhone等で撮影されたHEVC圧縮のHEIC）の**メタデータは読めるがピクセルデコードには失敗する**（`No decoding plugin installed for this compression format`エラー）
+- **macOSでは標準の`sips`コマンド（OS自体のHEVCデコーダを利用）で一旦JPEGに変換してから読み込む**ことでこれを回避している。追加インストール不要
+- macOS以外の環境では`sips`が無いため、sharp本体のHEIF対応に委ねる（環境によっては失敗する場合がある）
+
+### 非対応フォーマット
+
+EPS・AI（PostScript/Illustrator）、カメラRAW（RW2など）は、変換に必要なライブラリ（ImageMagick・libraw等）がHomebrew無しでは用意できないため非対応。
 
 ## 設定
 
@@ -111,7 +130,3 @@ cd .claude/skills/image-compressor && npm install
 | `dotenv`   | `.env` からの設定読み込み                                     |
 
 Oxipngバイナリ（`bin/oxipng`）はスキルに同梱済みのため再ダウンロードは不要。ただし同梱バイナリは **macOS arm64 (aarch64-apple-darwin) 専用**。他OS/アーキテクチャで使う場合は [oxipngのGitHub Releases](https://github.com/shssoichiro/oxipng/releases) から該当環境向けバイナリを取得し、`bin/oxipng` を差し替えること。
-
-## 由来・ライセンス
-
-このスキルは [hukusuke1007/agent-skills](https://github.com/hukusuke1007/agent-skills/tree/main/image-compressor)（作者: shohei、MIT License）を元に、Node.js(sharp)実装への移行・WebP/AVIF/PSD対応などの改変を加えたもの。ライセンス全文は同梱の[LICENSE](./LICENSE)を参照。

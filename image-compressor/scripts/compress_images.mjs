@@ -11,12 +11,17 @@
  *   avif -> libavif/aom (sharp内蔵)
  *
  * 入力:
- *   PSD/PSB以外 -> sharpが直接読み込み
- *   PSD/PSB     -> ag-psdでレイヤー合成済みのRGBAピクセルを取得し、
- *                  sharpのraw入力として以降のパイプラインに渡す（個別レイヤーは扱わない）
+ *   PSD/PSB以外    -> sharpが直接読み込み
+ *   PSD/PSB        -> ag-psdでレイヤー合成済みのRGBAピクセルを取得し、
+ *                     sharpのraw入力として以降のパイプラインに渡す（個別レイヤーは扱わない）。
+ *                     CMYKモードのPSD（印刷用素材で多い）にも対応。ただしCMYK+アルファ/特色など
+ *                     5チャンネル以上のPSDは非対応（ag-psdの制約）
+ *   HEIC/HEIF(mac) -> sharp同梱のlibheifは実機写真のHEVCピクセルデコードに対応していないため、
+ *                     macOS標準の`sips`コマンド(OS自体のデコーダ)で一旦JPEGに変換してから読み込む
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -24,6 +29,12 @@ import { promisify } from "node:util";
 import sharp from "sharp";
 import dotenv from "dotenv";
 import { readPsd, initializeCanvas } from "ag-psd";
+// ag-psdは既定でCMYKモードのPSDを拒否するが、実際のデコード処理(cmykToRgb)は実装済みのため
+// 内部の許可リストにCMYKを追加して有効化する（印刷用素材はCMYKで作られていることが多い）
+import { supportedColorModes } from "ag-psd/dist/psdReader.js";
+if (!supportedColorModes.includes(4)) {
+  supportedColorModes.push(4); // 4 = ColorMode.CMYK
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +45,7 @@ const OXIPNG_BIN = path.join(SKILL_ROOT, "bin", "oxipng");
 
 const VALID_FORMATS = ["jpg", "png", "webp", "avif"];
 const PSD_EXTENSIONS = [".psd", ".psb"];
+const HEIC_EXTENSIONS = [".heic", ".heif"];
 
 // ag-psdはNode環境ではデフォルトでnode-canvas(ネイティブ依存)を要求するが、
 // このMacにはHomebrew/ビルドツールが無いため、createImageDataだけを満たす
@@ -62,6 +74,10 @@ function isPsd(inputPath) {
   return PSD_EXTENSIONS.includes(path.extname(inputPath).toLowerCase());
 }
 
+function isHeic(inputPath) {
+  return HEIC_EXTENSIONS.includes(path.extname(inputPath).toLowerCase());
+}
+
 /**
  * PSD/PSBファイルを読み込み、レイヤー合成済みのRGBAピクセルをsharpインスタンスとして返す。
  * 個別レイヤーの合成は行わず、PSDファイル自体が保持する合成済み画像（composite image）を使う。
@@ -75,11 +91,32 @@ function loadPsdAsSharp(inputPath) {
     useImageData: true,
   });
   if (!psd.imageData) {
-    throw new Error("PSDに合成画像データが含まれていません");
+    throw new Error("PSDに合成画像データが含まれていません（CMYK+アルファ/特色など5チャンネル以上のPSDは非対応）");
   }
   const { width, height, data } = psd.imageData;
   const rawBuffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   return sharp(rawBuffer, { raw: { width, height, channels: 4 } });
+}
+
+/**
+ * HEIC/HEIFファイルを読み込み、sharpインスタンスとして返す。
+ * macOSでは`sips`（OS標準・実機のHEVCデコーダを利用）で一旦JPEGに変換してから読み込む。
+ * macOS以外ではsharp本体のHEIF対応に委ねる（環境によってはピクセルデコードに失敗する場合がある）。
+ */
+async function loadHeicAsSharp(inputPath) {
+  if (process.platform !== "darwin") {
+    return sharp(inputPath);
+  }
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `heic-convert-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`,
+  );
+  try {
+    await execFileAsync("sips", ["-s", "format", "jpeg", inputPath, "--out", tmpPath]);
+    return sharp(fs.readFileSync(tmpPath));
+  } finally {
+    fs.rmSync(tmpPath, { force: true });
+  }
 }
 
 function parseArgs(argv) {
@@ -170,7 +207,13 @@ async function main() {
     let image;
     try {
       originalSize = fs.statSync(inputPath).size;
-      image = isPsd(inputPath) ? loadPsdAsSharp(inputPath) : sharp(inputPath);
+      if (isPsd(inputPath)) {
+        image = loadPsdAsSharp(inputPath);
+      } else if (isHeic(inputPath)) {
+        image = await loadHeicAsSharp(inputPath);
+      } else {
+        image = sharp(inputPath);
+      }
       meta = await image.metadata();
     } catch (e) {
       console.error(`エラー: 画像を開けませんでした: ${inputPath} (${e.message})`);
