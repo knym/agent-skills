@@ -111,3 +111,7 @@ cd .claude/skills/image-compressor && npm install
 | `dotenv`   | `.env` からの設定読み込み                                     |
 
 Oxipngバイナリ（`bin/oxipng`）はスキルに同梱済みのため再ダウンロードは不要。ただし同梱バイナリは **macOS arm64 (aarch64-apple-darwin) 専用**。他OS/アーキテクチャで使う場合は [oxipngのGitHub Releases](https://github.com/shssoichiro/oxipng/releases) から該当環境向けバイナリを取得し、`bin/oxipng` を差し替えること。
+
+## 由来・ライセンス
+
+このスキルは [hukusuke1007/agent-skills](https://github.com/hukusuke1007/agent-skills/tree/main/image-compressor)（作者: shohei、MIT License）を元に、Node.js(sharp)実装への移行・WebP/AVIF/PSD対応などの改変を加えたもの。ライセンス全文は同梱の[LICENSE](./LICENSE)を参照。
